@@ -11,7 +11,7 @@ import base64
 import threading
 import time
 from tkinter import *
-
+import os
 
 # WINDOW AND FRAMES SETUP
 # window setup
@@ -34,6 +34,14 @@ def meme_post():
     progress_bar["value"] = 0
     progress_percent.config(text="0%")
     ws.update_idletasks()
+
+    # checking if meme was imported
+    if sel_file.cget("text") == "*No file selected":
+        progress_text.config(state=NORMAL)
+        progress_text.insert(tk.END, "No file selected" + "\n")
+        progress_text.config(state=DISABLED)
+
+        load_meme()
 
     ip = ip_input.get()
     port = port_input.get()
@@ -150,6 +158,8 @@ def meme_post():
 
         return
 
+    TOKEN = TOKEN[2:]
+
     threading.Thread(target=progress_bar_add(5)).start()
 
     # receiving port number from the server
@@ -193,6 +203,415 @@ def meme_post():
 
             return
 
+    progress_text.config(state=NORMAL)
+    progress_text.insert(tk.END, "Opening DataChannel connection" + "\n")
+    progress_text.config(state=DISABLED)
+
+    # establishing connection with the data channel
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as data_channel:
+        try:
+            data_channel.connect((ip, PORT))
+
+            progress_text.config(state=NORMAL)
+            progress_text.insert(tk.END, "DataChannel connection established" + "\n")
+            progress_text.config(state=DISABLED)
+
+            threading.Thread(target=progress_bar_add(5)).start()
+
+        except Exception:
+            progress_bar["value"] = 0
+            progress_percent.config(text="0%")
+
+            data_channel.sendall(pynetstring.encode('E DataChannel connection failed'))
+
+            progress_text.config(state=NORMAL)
+            progress_text.insert(tk.END, "Server did not opened the Data Channel" + "\n")
+            progress_text.config(state=DISABLED)
+
+            return
+
+        # sending nick to the server in order to receive security token from the server
+        data_channel.sendall(pynetstring.encode('C ' + nick))
+
+        # receiving server security token
+        data = data_channel.recv(1024)
+        SEC_TOKEN = pynetstring.decode(data)[0]
+        SEC_TOKEN = SEC_TOKEN.decode('utf-8')
+
+        if SEC_TOKEN[0:2] != "S " or len(SEC_TOKEN) < 3:
+            progress_bar["value"] = 0
+            progress_percent.config(text="0%")
+
+            s.sendall(pynetstring.encode('E Expected message not received (S <token>)'))
+
+            progress_text.config(state=NORMAL)
+            progress_text.insert(tk.END, "Unexpected message from the server, security token expected" + "\n")
+            progress_text.config(state=DISABLED)
+
+            return
+        
+        else:
+            SEC_TOKEN = SEC_TOKEN[2:]
+
+            progress_text.config(state=NORMAL)
+            progress_text.insert(tk.END, "Security token received" + "\n")
+            progress_text.config(state=DISABLED)
+
+            threading.Thread(target=progress_bar_add(5)).start()
+
+        if SEC_TOKEN != TOKEN:
+            progress_bar["value"] = 0
+            progress_percent.config(text="0%")
+
+            s.sendall(pynetstring.encode('E Security token mismatch'))
+
+            progress_text.config(state=NORMAL)
+            progress_text.insert(tk.END, "Security token mismatch" + "\n")
+            progress_text.config(state=DISABLED)
+
+            return
+
+        else:
+            progress_text.config(state=NORMAL)
+            progress_text.insert(tk.END, "Tokens verified" + "\n")
+            progress_text.config(state=DISABLED)
+
+            threading.Thread(target=progress_bar_add(5)).start()
+
+        # DATA TRANSFER
+        char_sum = 0
+
+        while True:
+            data = data_channel.recv(1024)
+            data = pynetstring.decode(data)[0]
+
+            # type of data
+            if data == b'S REQ:meme':
+                data_channel.sendall(pynetstring.encode('C ' + image))
+
+                progress_text.config(state=NORMAL)
+                progress_text.insert(tk.END, "Meme sent to the server" + "\n")
+                progress_text.config(state=DISABLED)
+
+                threading.Thread(target=progress_bar_add(5)).start()
+
+                data = data_channel.recv(1024)
+                data = pynetstring.decode(data)[0]
+                data = data.decode('utf-8')
+
+                if data[0:6] != "S ACK:":
+                    progress_bar["value"] = 0
+                    progress_percent.config(text="0%")
+
+                    data_channel.sendall(pynetstring.encode('E Expected message not received (S ACK:<dataLength>)'))
+
+                    progress_text.config(state=NORMAL)
+                    progress_text.insert(tk.END, "Unexpected message from the server, ACK expected" + "\n")
+                    progress_text.config(state=DISABLED)
+
+                    return
+
+                else:
+                    data = data[6:]
+
+                    try:
+                        char_sum += int(data)
+
+                    except ValueError:
+                        progress_bar["value"] = 0
+                        progress_percent.config(text="0%")
+
+                        data_channel.sendall(pynetstring.encode('E DataLength not valid'))
+
+                        progress_text.config(state=NORMAL)
+                        progress_text.insert(tk.END, "Unexpected message from the server, DataLength could not be converted to Integer" + "\n")
+                        progress_text.config(state=DISABLED)
+
+                        return
+
+            elif data == b'S REQ:description':
+                description = desc_input.get('1.0', tk.END)
+
+                if description == "":
+                    progress_bar["value"] = 0
+                    progress_percent.config(text="0%")
+
+                    progress_text.config(state=NORMAL)
+                    progress_text.insert(tk.END, "Description input not filled" + "\n")
+                    progress_text.config(state=DISABLED)
+
+                    data_channel.sendall(pynetstring.encode('E Description not filled'))
+
+                    return
+
+                data_channel.sendall(pynetstring.encode('C ' + description))
+
+                progress_text.config(state=NORMAL)
+                progress_text.insert(tk.END, "Description sent to the server" + "\n")
+                progress_text.config(state=DISABLED)
+
+                threading.Thread(target=progress_bar_add(5)).start()
+
+                data = data_channel.recv(1024)
+                data = pynetstring.decode(data)[0]
+                data = data.decode('utf-8')
+
+                if data[0:6] != "S ACK:":
+                    progress_bar["value"] = 0
+                    progress_percent.config(text="0%")
+
+                    data_channel.sendall(pynetstring.encode('E Expected message not received (S ACK:<dataLength>)'))
+
+                    progress_text.config(state=NORMAL)
+                    progress_text.insert(tk.END, "Unexpected message from the server, ACK expected" + "\n")
+                    progress_text.config(state=DISABLED)
+
+                    return
+
+                else:
+                    data = data[6:]
+
+                    try:
+                        char_sum += int(data)
+
+                    except ValueError:
+                        progress_bar["value"] = 0
+                        progress_percent.config(text="0%")
+
+                        data_channel.sendall(pynetstring.encode('E DataLength not valid'))
+
+                        progress_text.config(state=NORMAL)
+                        progress_text.insert(tk.END, "Unexpected message from the server, DataLength could not be converted to Integer" + "\n")
+                        progress_text.config(state=DISABLED)
+
+                        return
+
+            elif data == b'S REQ:isNSFW':
+                isNSFW = nsfw_check.get()
+
+                if isNSFW == 0:
+                    data_channel.sendall(pynetstring.encode('C false'))
+
+                else:
+                    data_channel.sendall(pynetstring.encode('C true'))
+
+                progress_text.config(state=NORMAL)
+                progress_text.insert(tk.END, "NSFW status sent to the server" + "\n")
+                progress_text.config(state=DISABLED)
+
+                threading.Thread(target=progress_bar_add(5)).start()
+
+                data = data_channel.recv(1024)
+                data = pynetstring.decode(data)[0]
+                data = data.decode('utf-8')
+
+                if data[0:6] != "S ACK:":
+                    progress_bar["value"] = 0
+                    progress_percent.config(text="0%")
+
+                    data_channel.sendall(pynetstring.encode('E Expected message not received (S ACK:<dataLength>)'))
+
+                    progress_text.config(state=NORMAL)
+                    progress_text.insert(tk.END, "Unexpected message from the server, ACK expected" + "\n")
+                    progress_text.config(state=DISABLED)
+
+                    return
+
+                else:
+                    data = data[6:]
+
+                    try:
+                        char_sum += int(data)
+
+                    except ValueError:
+                        progress_bar["value"] = 0
+                        progress_percent.config(text="0%")
+
+                        data_channel.sendall(pynetstring.encode('E DataLength not valid'))
+
+                        progress_text.config(state=NORMAL)
+                        progress_text.insert(tk.END, "Unexpected message from the server, DataLength could not be converted to Integer" + "\n")
+                        progress_text.config(state=DISABLED)
+
+                        return
+
+            elif data == b'S REQ:password':
+                password = pass_input.get()
+
+                if password == "":
+                    progress_bar["value"] = 0
+                    progress_percent.config(text="0%")
+
+                    progress_text.config(state=NORMAL)
+                    progress_text.insert(tk.END, "Password input not filled" + "\n")
+                    progress_text.config(state=DISABLED)
+
+                    data_channel.sendall(pynetstring.encode('E Pescription not filled'))
+
+                    return
+
+                data_channel.sendall(pynetstring.encode('C ' + password))
+
+                progress_text.config(state=NORMAL)
+                progress_text.insert(tk.END, "Password sent to the server" + "\n")
+                progress_text.config(state=DISABLED)
+
+                threading.Thread(target=progress_bar_add(5)).start()
+
+                data = data_channel.recv(1024)
+                data = pynetstring.decode(data)[0]
+                data = data.decode('utf-8')
+
+                if data[0:6] != "S ACK:":
+                    progress_bar["value"] = 0
+                    progress_percent.config(text="0%")
+
+                    data_channel.sendall(pynetstring.encode('E Expected message not received (S ACK:<dataLength>)'))
+
+                    progress_text.config(state=NORMAL)
+                    progress_text.insert(tk.END, "Unexpected message from the server, ACK expected" + "\n")
+                    progress_text.config(state=DISABLED)
+
+                    return
+
+                else:
+                    data = data[6:]
+
+                    try:
+                        char_sum += int(data)
+
+                    except ValueError:
+                        progress_bar["value"] = 0
+                        progress_percent.config(text="0%")
+
+                        data_channel.sendall(pynetstring.encode('E DataLength not valid'))
+
+                        progress_text.config(state=NORMAL)
+                        progress_text.insert(tk.END, "Unexpected message from the server, DataLength could not be converted to Integer" + "\n")
+                        progress_text.config(state=DISABLED)
+
+                        return
+
+            else:
+                data = data.decode('utf-8')
+
+                if data[0:6] == "S END:":
+                    DTOKEN = data[6:]
+
+                    progress_text.config(state=NORMAL)
+                    progress_text.insert(tk.END, "Server wants to finish transmission. DTOKEN received from the server" + "\n")
+                    progress_text.config(state=DISABLED)
+
+                    threading.Thread(target=progress_bar_add(5)).start()
+
+                    if DTOKEN == TOKEN:
+                        progress_bar["value"] = 0
+                        progress_percent.config(text="0%")
+
+                        progress_text.config(state=NORMAL)
+                        progress_text.insert(tk.END, "DTOKEN is the same as TOKEN" + "\n")
+                        progress_text.config(state=DISABLED)
+
+                        data_channel.sendall(pynetstring.encode('E DTOKEN is the same as TOKEN'))
+
+                        return
+
+                    else:
+                        break
+
+                else:
+                    progress_bar["value"] = 0
+                    progress_percent.config(text="0%")
+
+                    progress_text.config(state=NORMAL)
+                    progress_text.insert(tk.END, "Unexpected message from the server" + "\n")
+                    progress_text.config(state=DISABLED)
+
+                    data_channel.sendall(pynetstring.encode('E Unexpected message from the server'))
+
+                    return
+
+    # third part - communication with the server on the main channel
+    data = data_channel.recv(1024)
+    data = pynetstring.decode(data)[0]
+    data = data.decode('utf-8')
+
+    if data[0:2] != "S ":
+        progress_bar["value"] = 0
+        progress_percent.config(text="0%")
+
+        data_channel.sendall(pynetstring.encode('E Expected message not received (S <dataLength>)'))
+
+        progress_text.config(state=NORMAL)
+        progress_text.insert(tk.END, "Unexpected message from the server, S expected" + "\n")
+        progress_text.config(state=DISABLED)
+
+        return
+
+    try:
+        MSGLEN = int(data[2:])
+    
+    except ValueError:
+        progress_bar["value"] = 0
+        progress_percent.config(text="0%")
+
+        data_channel.sendall(pynetstring.encode('E DataLength not valid'))
+
+        progress_text.config(state=NORMAL)
+        progress_text.insert(tk.END, "Unexpected message from the server, DataLength could not be converted to Integer" + "\n")
+        progress_text.config(state=DISABLED)
+
+        return
+
+    if MSGLEN != char_sum:
+        progress_bar["value"] = 0
+        progress_percent.config(text="0%")
+
+        data_channel.sendall(pynetstring.encode('E DataLength not valid'))
+
+        progress_text.config(state=NORMAL)
+        progress_text.insert(tk.END, "Unexpected message from the server, DataLength not equal to char sum" + "\n")
+        progress_text.config(state=DISABLED)
+
+        return
+
+    # send dtoken to server
+    s.sendall(pynetstring.encode('C ' + DTOKEN))
+
+    progress_text.config(state=NORMAL)
+    progress_text.insert(tk.END, "DTOKEN sent to the server" + "\n")
+    progress_text.config(state=DISABLED)
+
+    threading.Thread(target=progress_bar_add(5)).start()
+
+    data = s.recv(1024)
+    data = pynetstring.decode(data)[0]
+
+    if data == b'S ACK:':
+        progress_text.config(state=NORMAL)
+        progress_text.insert(tk.END, "DTOKEN sent to the server, connection ready to end" + "\n")
+        progress_text.config(state=DISABLED)
+
+        threading.Thread(target=progress_bar_add(5)).start()
+    
+    else:
+        progress_bar["value"] = 0
+        progress_percent.config(text="0%")
+
+        s.sendall(pynetstring.encode('E Expected message not received (S ACK)'))
+
+        progress_text.config(state=NORMAL)
+        progress_text.insert(tk.END, "Unexpected message from the server, (S ACK) message expected" + "\n")
+        progress_text.config(state=DISABLED)
+
+        return
+
+    progress_text.config(state=NORMAL)
+    progress_text.insert(tk.END, "Meme sent successfully" + "\n")
+    progress_text.config(state=DISABLED)
+
+    s.close()
+
 
 # "adding progress" to progress bar
 def progress_bar_add(progress):
@@ -202,10 +621,30 @@ def progress_bar_add(progress):
         progress_percent.config(text=str(int(progress_bar["value"])) + "%")
         time.sleep(0.1)
 
+    return
 
 
+def load_meme():
+    global image
 
+    # load file from pc
+    file = filedialog.askopenfilename(initialdir="/", title="Select file", filetypes=(("JPEG files", ("*.jpg", "*.jpeg")), ("PNG files", "*.png")))
+    
+    if file == "":
+        progress_text.config(state=NORMAL)
+        progress_text.insert(tk.END, "Import Cancelled" + "\n")
+        progress_text.config(state=DISABLED)
+        
+        return 
 
+    else:
+        progress_text.config(state=NORMAL)
+        progress_text.insert(tk.END, "Meme import successful" + "\n")
+        progress_text.config(state=DISABLED)
+
+        sel_file.config(text=os.path.split(file)[1])
+
+    image = base64.b64encode(open(file, "rb").read()).decode("ascii")
 
 
 # CREDITENTIALS FRAME
@@ -266,17 +705,20 @@ nsfw_check.grid(row=2, column=0, sticky='w', pady=2)
 
 
 # BUTTONS AND PROGRESS BAR FRAME
-upload_frame = tk.Frame(ws, background="#34393E", width=1144, height=260)
+upload_frame = tk.Frame(ws, background="#34393E", width=1144, height=300)
 upload_frame.grid(row=5, column=0, columnspan=3, sticky="n", pady=10)
 upload_frame.grid_propagate(0)
 
 # upload meme from PC button
-upload_button = tk.Button(upload_frame, text="Upload MEME from PC", width=20, background="#FDCB52", font=("Helvetica", 12, "bold"), fg="#34393E", activebackground="#34393E", activeforeground="#FDCB52")
+upload_button = tk.Button(upload_frame, text="Upload MEME from PC", width=20, background="#FDCB52", font=("Helvetica", 12, "bold"), fg="#34393E", activebackground="#34393E", activeforeground="#FDCB52", command=load_meme)
 upload_button.grid(row=0, column=0, sticky='w')
 
 # post meme button
 post_button = tk.Button(upload_frame, text="Post MEME", width=10, background="#FDCB52", font=("Helvetica", 12, "bold"), fg="#34393E", activebackground="#34393E", activeforeground="#FDCB52", command=meme_post)
 post_button.grid(row=0, column=11, sticky='e')
+
+sel_file = tk.Label(upload_frame, text="*No file selected", background="#34393E", font=("Helvetica", 12, "bold"), fg="#FDCB52")
+sel_file.grid(row=0, column=1, sticky='w', padx=3)
 
 # progress bar
 progress_text = tk.Text(upload_frame, width=163, height=8, font=("Helvetica", 10), fg="#34393E", background="#BFBFBF", state="disabled")
@@ -291,223 +733,3 @@ progress_percent.grid(row=5, column=0, sticky='w', pady=5)
 
 # RUN THE APP MAINLOOP
 ws.mainloop()
-
-
-
-
-
-"""
-
-
-        # receiving token
-        TOKEN_MESSAGE = pynetstring.decode(s.recv(1024))
-        for i in TOKEN_MESSAGE:
-            TOKEN = str(i.decode('utf-8')[2:])
-
-        print(f"Token: {TOKEN}")
-
-        # getting port number
-        PORT_MESSAGE = pynetstring.decode(s.recv(1024))
-        for i in PORT_MESSAGE:
-            DATA_PORT = int(i.decode('utf-8')[2:])
-
-        print(f"Port: {DATA_PORT}")
-
-
-        # connecting to dataChannel
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as dataChannel:
-            dataChannel.connect((HOST, DATA_PORT))
-
-            # sending nick
-            dataChannel.sendall(pynetstring.encode(b'C ' + bytes(nick, 'utf-8')))
-
-            # receiving token
-            TOKEN_MESSAGE = pynetstring.decode(dataChannel.recv(1024))
-            for i in TOKEN_MESSAGE:
-                CHECK_TOKEN = str(i.decode('utf-8')[2:])
-
-            # checking token validity
-            if CHECK_TOKEN == TOKEN:
-                print('Token Match')
-            else:
-                print(f'Token Mismatch, token received: {CHECK_TOKEN}')
-
-            # data
-            for i in range(4):
-                data = pynetstring.decode(dataChannel.recv(1024))[0]
-                
-                if data == b'S REQ:meme':
-                    # sending data
-                    base64string = base64.b64encode(open("./images/Meme.png", "rb").read()).decode("ascii")
-                    dataChannel.sendall(pynetstring.encode(b'C ' + bytes(base64string, "ascii")))
-
-                    # retrieving datalength returned by the server
-                    print(f"Meme sent successfully: {pynetstring.decode(dataChannel.recv(1024))}")
-
-                elif data == b'S REQ:description':
-                    # sending data
-                    dataChannel.sendall(pynetstring.encode(b'C ' + bytes('This is a meme', 'utf-8')))
-
-                    # retrieving datalength returned by the server
-                    print(f"Description sent successfully: {pynetstring.decode(dataChannel.recv(1024))}")
-
-                elif data == b'S REQ:isNSFW':
-                    # sending data
-                    dataChannel.sendall(pynetstring.encode(b'C ' + bytes('true', 'utf-8')))
-
-                    # retrieving datalength returned by the server
-                    print(f"NSFW status sent successfully: {pynetstring.decode(dataChannel.recv(1024))}")
-
-                elif data == b'S REQ:password':
-                    # sending data
-                    dataChannel.sendall(pynetstring.encode(b'C ' + bytes('password', 'utf-8')))
-
-                    # retrieving datalength returned by the server
-                    print(f"Password sent successfully: {pynetstring.decode(dataChannel.recv(1024))}")
-
-                else:
-                    print(f"Request unknown, retrieving dtoken")
-                    break
-
-            # retrieving dtoken
-            DTOKEN_RAW = pynetstring.decode(dataChannel.recv(1024))
-            for i in DTOKEN_RAW:
-                DTOKEN = str(i.decode('utf-8')[2:])
-            DTOKEN = DTOKEN[4:]
-
-            # checking token difference
-            if DTOKEN == TOKEN:
-                print('Dtoken verification failed, something unexpected happened')
-                return 
-
-            print(f"Dtoken verification successful: {DTOKEN}")
-            # RETURNING TO MAIN CHANNEL
-
-        # catching msglen
-        msglen = pynetstring.decode(s.recv(1024))[0]
-        print(f"Message length: {msglen}")
-
-        # sending server dtoken
-        print(DTOKEN)
-        s.sendall(pynetstring.encode(b'C ' + bytes(DTOKEN, "utf-8")))
-
-        # ending the connection
-        data = pynetstring.decode(s.recv(1024))[0]
-        if data == b'S ACK':
-            print('Connection ended')
-
-        else:
-            print(f'Connection end failed: {data}')
-            return
-
-
-if __name__ == '__main__':
-    main()
-
-
-"""
-
-
-
-"""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        # establishing connection with server
-        try:
-            s.connect((ip, int(port)))
-
-            s.sendall(pynetstring.encode('C MTP V:1.0'))
-            data = s.recv(1024)
-
-            if pynetstring.decode(data) == [b'S MTP V:1.0']:
-                progress_text.config(state=NORMAL)
-                progress_text.insert(tk.END, "Connection initialized: " + ip + ":" + port + "\n")
-                progress_text.config(state=DISABLED)
-            else:
-                progress_text.config(state=NORMAL)
-                progress_text.insert(tk.END, "Connection failed: " + pynetstring.decode(data)[0] + "\n")
-                progress_text.config(state=DISABLED)
-                return
-
-        except:
-            pass        
-
-
-
-
-# establishing connection
-def establish_conn():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    ip = ip_input.get()
-    port = port_input.get()
-
-    if ip == "" or port == "":
-        return False
-
-    try:
-        s.connect((ip, int(port)))
-
-        s.sendall(pynetstring.encode('C MTP V:1.0'))
-
-        
-
-        if pynetstring.decode(data) == [b'S MTP V:1.0']:
-            progress_text.config(state=NORMAL)
-            progress_text.insert(tk.END, "Connection initialized: " + ip + ":" + port + "\n")
-            progress_text.config(state=DISABLED)
-
-        else:
-            progress_text.config(state=NORMAL)
-            progress_text.insert(tk.END, "Connection failed" + "\n")
-            progress_text.config(state=DISABLED)
-
-            return False
-        
-        return True
-
-    except:
-        return False 
-
-# opening datachannel
-def datachannel_setup():
-    if nick_input.get() == "":
-        return False
-    else:
-        s.sendall(pynetstring.encode(b'C ' + bytes(nick, 'utf-8')))
-
-
-def initial_comm():
-    pass
-
-
-# turn image into base64
-def image_compress():
-    file = filedialog.askopenfilename(initialdir="/", title="Select file", filetypes=(("jpeg files", "*.jpeg"), ("png files", "*.png")))
-    if file == "":
-        progress_text.config(state=NORMAL)
-        progress_text.insert(tk.END, "Import Cancelled" + "\n")
-        progress_text.config(state=DISABLED)
-        return False
-    else:
-        try:
-            progress_text.config(state=NORMAL)
-            progress_text.insert(tk.END, "Meme Loaded from PC: " + str(file) + "\n")
-            progress_text.config(state=DISABLED)
-            base64string = base64.b64encode(open(file, "rb").read()).decode("ascii")
-            
-            return True
-        except:
-            return False
-
-"""
-
-
-
-
-
-
-
-
-
-
-
